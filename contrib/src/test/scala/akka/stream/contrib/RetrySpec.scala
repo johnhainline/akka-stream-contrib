@@ -23,12 +23,15 @@ trait RetrySpec extends BaseStreamSpec {
 
   "Retry" should {
     "retry ints according to their parity" in {
+
+      def blah(s: Int): Option[(Int, Int)] = {
+        if (s < 42) Some((s + 1, s + 1))
+        else None
+      }
+
       val (source, sink) = TestSource.probe[Int]
         .map(i => (i, i))
-        .via(Retry(flow[Int]) { s =>
-          if (s < 42) Some((s + 1, s + 1))
-          else None
-        })
+        .via(Retry(flow[Int])(blah))
         .toMat(TestSink.probe)(Keep.both)
         .run()
 
@@ -185,6 +188,31 @@ trait RetrySpec extends BaseStreamSpec {
       killSwitch.abort(failedElem.failed.get)
       sink.request(1)
       sink.expectError(failedElem.failed.get)
+    }
+  }
+
+  "RetryWithException" should {
+    "provide the failed exception on retry" in {
+
+      def retryWithFunction(e: Throwable, s: Int): Option[(Int, Int)] = {
+        assert(e.equals(failedElem.failed.get))
+        None
+      }
+      def flow[T] = Flow[(Int, T)].map {
+        case (_, j) => (failedElem, j)
+      }
+
+      val (source, sink) = TestSource.probe[Int]
+        .map(i => (i, i))
+        .via(Retry.retryWithException(flow[Int])(retryWithFunction))
+        .toMat(TestSink.probe)(Keep.both)
+        .run()
+
+      sink.request(99)
+      source.sendNext(1)
+      assert(sink.expectNext()._1 === failedElem)
+      source.sendComplete()
+      sink.expectComplete()
     }
   }
 

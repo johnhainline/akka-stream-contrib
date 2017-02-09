@@ -29,7 +29,7 @@ object Retry {
    * and may result in a deadlock.
    *
    * @param flow the flow to retry
-   * @param retryWith if output was failure, we can optionaly recover from it,
+   * @param retryWith if output was failure, we can optionally recover from it,
    *        and retry with a new pair of input & new state we get from this function.
    * @tparam I input elements type
    * @tparam O output elements type
@@ -37,6 +37,30 @@ object Retry {
    * @tparam M materialized value type
    */
   def apply[I, O, S, M](flow: Graph[FlowShape[(I, S), (Try[O], S)], M])(retryWith: S => Option[(I, S)]): Graph[FlowShape[(I, S), (Try[O], S)], M] = {
+    def retryWithExceptionFunction(e: Throwable, s: S) = retryWith(s)
+    retryWithException(flow)(retryWithExceptionFunction)
+  }
+
+  /**
+    * Factory for Retry flow that can access the exception on a Failure.
+    * If the flow emits a failed element (i.e. `Try` is a `Failure`), the `retryWith` function is fed with the
+    * `state` of the failed element and the exception that is held in the `Failure`.
+    * The function may yield `None` instead of `Some((input,state))`, which means not to retry a failed element.
+    *
+    * IMPORTANT CAVEAT:
+    * The given flow must not change the number of elements passing through it (i.e. it should output
+    * exactly one element for every received element). Ignoring this, will have an unpredicted result,
+    * and may result in a deadlock.
+    *
+    * @param flow the flow to retry
+    * @param retryWith if output was failure, we can optionally recover from it, even considering the failure's
+    *        exception, and retry with a new pair of input & new state we get from this function.
+    * @tparam I input elements type
+    * @tparam O output elements type
+    * @tparam S state to create a new `(I,S)` to retry with
+    * @tparam M materialized value type
+    */
+  def retryWithException[I, O, S, M](flow: Graph[FlowShape[(I, S), (Try[O], S)], M])(retryWith: (Throwable, S) => Option[(I, S)]): Graph[FlowShape[(I, S), (Try[O], S)], M] = {
     GraphDSL.create(flow) { implicit b => origFlow =>
       import GraphDSL.Implicits._
 
@@ -66,7 +90,7 @@ object Retry {
    *        the inner queue can get too big. if the limit is reached,
    *        the stage will fail.
    * @param flow the flow to retry
-   * @param retryWith if output was failure, we can optionaly recover from it,
+   * @param retryWith if output was failure, we can optionally recover from it,
    *        and retry with a sequence of input & new state pairs we get from this function.
    * @tparam I input elements type
    * @tparam O output elements type
@@ -77,7 +101,8 @@ object Retry {
     GraphDSL.create(flow) { implicit b => origFlow =>
       import GraphDSL.Implicits._
 
-      val retry = b.add(new RetryConcatCoordinator[I, S, O](limit, retryWith))
+      def retryWithExceptionFunction(e: Throwable, s: S) = retryWith(s)
+      val retry = b.add(new RetryConcatCoordinator[I, S, O](limit, retryWithExceptionFunction))
 
       retry.out2 ~> origFlow ~> retry.in2
 
@@ -85,7 +110,7 @@ object Retry {
     }
   }
 
-  private[akka] class RetryCoordinator[I, S, O](retryWith: S => Option[(I, S)]) extends GraphStage[BidiShape[(I, S), (Try[O], S), (Try[O], S), (I, S)]] {
+  private[akka] class RetryCoordinator[I, S, O](retryWith: (Throwable, S) => Option[(I, S)]) extends GraphStage[BidiShape[(I, S), (Try[O], S), (Try[O], S), (I, S)]] {
     val in1 = Inlet[(I, S)]("Retry.ext.in")
     val out1 = Outlet[(Try[O], S)]("Retry.ext.out")
     val in2 = Inlet[(Try[O], S)]("Retry.int.in")
@@ -121,7 +146,7 @@ object Retry {
           elementInCycle = false
           grab(in2) match {
             case s @ (_: Success[O], _) => pushAndCompleteIfLast(s)
-            case failure @ (_, s) => retryWith(s).fold(pushAndCompleteIfLast(failure)) { is =>
+            case failure @ (Failure(exception), s) => retryWith(exception, s).fold(pushAndCompleteIfLast(failure)) { is =>
               pull(in2)
               if (isAvailable(out2)) {
                 push(out2, is)
@@ -158,7 +183,7 @@ object Retry {
     }
   }
 
-  private[akka] class RetryConcatCoordinator[I, S, O](limit: Long, retryWith: S => Option[immutable.Iterable[(I, S)]]) extends GraphStage[BidiShape[(I, S), (Try[O], S), (Try[O], S), (I, S)]] {
+  private[akka] class RetryConcatCoordinator[I, S, O](limit: Long, retryWith: (Throwable, S) => Option[immutable.Iterable[(I, S)]]) extends GraphStage[BidiShape[(I, S), (Try[O], S), (Try[O], S), (I, S)]] {
     val in1 = Inlet[(I, S)]("RetryConcat.ext.in")
     val out1 = Outlet[(Try[O], S)]("RetryConcat.ext.out")
     val in2 = Inlet[(Try[O], S)]("RetryConcat.int.in")
@@ -204,7 +229,7 @@ object Retry {
           elementInCycle = false
           grab(in2) match {
             case s @ (_: Success[O], _) => pushAndCompleteIfLast(s)
-            case failure @ (_, s) => retryWith(s).fold(pushAndCompleteIfLast(failure)) { xs =>
+            case failure @ (Failure(exception), s) => retryWith(exception, s).fold(pushAndCompleteIfLast(failure)) { xs =>
               if (xs.size + queue.size > limit) failStage(new IllegalStateException(s"Queue limit of $limit has been exceeded. Trying to append ${xs.size} elements to a queue that has ${queue.size} elements."))
               else {
                 xs.foreach(queue.enqueue(_))
