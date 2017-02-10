@@ -42,24 +42,24 @@ object Retry {
   }
 
   /**
-    * Factory for Retry flow that can access the exception on a Failure.
-    * If the flow emits a failed element (i.e. `Try` is a `Failure`), the `retryWith` function is fed with the
-    * `state` of the failed element and the exception that is held in the `Failure`.
-    * The function may yield `None` instead of `Some((input,state))`, which means not to retry a failed element.
-    *
-    * IMPORTANT CAVEAT:
-    * The given flow must not change the number of elements passing through it (i.e. it should output
-    * exactly one element for every received element). Ignoring this, will have an unpredicted result,
-    * and may result in a deadlock.
-    *
-    * @param flow the flow to retry
-    * @param retryWith if output was failure, we can optionally recover from it, even considering the failure's
-    *        exception, and retry with a new pair of input & new state we get from this function.
-    * @tparam I input elements type
-    * @tparam O output elements type
-    * @tparam S state to create a new `(I,S)` to retry with
-    * @tparam M materialized value type
-    */
+   * Factory for Retry flow that can access the exception on a Failure.
+   * If the flow emits a failed element (i.e. `Try` is a `Failure`), the `retryWith` function is fed with the
+   * `state` of the failed element and the exception that is held in the `Failure`.
+   * The function may yield `None` instead of `Some((input,state))`, which means not to retry a failed element.
+   *
+   * IMPORTANT CAVEAT:
+   * The given flow must not change the number of elements passing through it (i.e. it should output
+   * exactly one element for every received element). Ignoring this, will have an unpredicted result,
+   * and may result in a deadlock.
+   *
+   * @param flow the flow to retry
+   * @param retryWith if output was failure, we can optionally recover from it, even considering the failure's
+   *        exception, and retry with a new pair of input & new state we get from this function.
+   * @tparam I input elements type
+   * @tparam O output elements type
+   * @tparam S state to create a new `(I,S)` to retry with
+   * @tparam M materialized value type
+   */
   def retryWithException[I, O, S, M](flow: Graph[FlowShape[(I, S), (Try[O], S)], M])(retryWith: (Throwable, S) => Option[(I, S)]): Graph[FlowShape[(I, S), (Try[O], S)], M] = {
     GraphDSL.create(flow) { implicit b => origFlow =>
       import GraphDSL.Implicits._

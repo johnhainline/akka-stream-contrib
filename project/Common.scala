@@ -17,8 +17,8 @@ object Common extends AutoPlugin {
   override def requires = plugins.JvmPlugin && HeaderPlugin
 
   override lazy val projectSettings = SbtScalariform.scalariformSettings ++ Seq(
-    organization := "com.typesafe.akka",
-    organizationName := "Lightbend Inc.",
+    organization := "com.monsanto.customer360",
+    organizationName := "Asynchrony",
 
     licenses := Seq(("Apache License, Version 2.0", url("http://www.apache.org/licenses/LICENSE-2.0"))),
 
